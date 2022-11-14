@@ -1,6 +1,15 @@
 #include <ECE3.h>
 #include <stdio.h>
 
+const int left_nslp_pin=31; // nslp ==> awake & ready for PWM
+const int left_dir_pin=29;
+const int left_pwm_pin=40;
+const int right_nslp_pin=11;
+const int right_dir_pin=30;
+const int right_pwm_pin=39;
+
+
+// Parameters for Distance Sensor
 uint16_t sensorValues[8];
 
 int weightIndex = 0;
@@ -16,22 +25,45 @@ float biases2[4] = {0.12331193,0.14046752,-0.042515263,0.12476696};
 float biases3[2] = {0,0.40639848};
 float bias4 = 0.06803763;
 
-void setup()
-{
-  ECE3_Init();
-  Serial.begin(9600); // set the data rate in bits per second for serial data transmission
-  delay(2000);
+void ChangeBaseSpeed(int initialBaseSpd, int finalBaseSpd) {
+/*  
+ *   This function changes the car base speed gradually (in about 300 ms) from
+ *   initialspeed to final speed. This non-instantaneous speed change reduces the 
+ *   load on the plastic geartrain, and reduces the failure rate of the motors. 
+ */
+  int numSteps = 5;
+  int pwmLeftVal = initialBaseSpd; // initialize left wheel speed 
+  int pwmRightVal = initialBaseSpd;  // initialize right wheel speed 
+  int deltaLeft = (finalBaseSpd-initialBaseSpd)/numSteps; // left in(de)crement
+  int deltaRight = (finalBaseSpd-initialBaseSpd)/numSteps;  // right in(de)crement
+
+  for(int k=0;k<numSteps;k++) {
+    pwmLeftVal = pwmLeftVal + deltaLeft;
+    pwmRightVal = pwmRightVal + deltaRight;
+    analogWrite(left_pwm_pin,pwmLeftVal);    
+    analogWrite(right_pwm_pin,pwmRightVal); 
+    delay(60);   
+  } // end for int k
+} // end ChangeBaseSpeed
+
+
+void steer(int baseSpeed, float steerAmount) {
+  // positive steerAmount to turn right
+  // negative steerAmount to turn left
+  analogWrite(right_pwm_pin, baseSpeed - steerAmount);
+  analogWrite(left_pwm_pin, baseSpeed + steerAmount);  
 }
 
+
+
+// distance sensor
 float ReLU(float x)
 {
     return (x > 0) ? x : 0;
 }
 
-void loop()
-{
-  // read raw sensor values
-  
+int distanceFromTrack() {
+  uint16_t sensorValues[8];
   float neurons0[8] = {0,0,0,0,0,0,0,0};
   float neurons1[8] = {0,0,0,0,0,0,0,0};
   float neurons2[4] = {0,0,0,0};
@@ -98,10 +130,52 @@ void loop()
   }
 
   output = ReLU(neurons3[0]*weights4[0]+neurons3[1]+weights4[1]+bias4);
-  //Serial.println(sizeof(neurons3)/sizeof(float));
-  Serial.print("Predicted distance is: ");
-  //Serial.println(output);
-  Serial.println(int((output-0.5)*80));
+  
+  return int((output-0.5)*80);
+}
+
+float Kp = -0.25;
+float Kd = 0.75;
+
+int prevError = 0;
+
+int baseSpeed = 30;
+
+void setup()
+{
+  pinMode(left_nslp_pin,OUTPUT);
+  pinMode(left_dir_pin,OUTPUT);
+  pinMode(left_pwm_pin,OUTPUT);
+  pinMode(right_nslp_pin,OUTPUT);
+  pinMode(right_dir_pin,OUTPUT);
+  pinMode(right_pwm_pin,OUTPUT);
+
+  digitalWrite(left_nslp_pin,HIGH);
+  digitalWrite(right_nslp_pin,HIGH);
+
+  digitalWrite(left_dir_pin,LOW);  // Set car direction to forward
+  digitalWrite(right_dir_pin,LOW);
+
+  ECE3_Init();
+  Serial.begin(9600); // set the data rate in bits per second for serial data transmission
+  
+  delay(2000);
+
+  ChangeBaseSpeed(0,baseSpeed); // Start car up
+}
+
+void loop()
+{
+  // GET SENSOR VALS
+
+  int error = distanceFromTrack();
+  int rateError = error - prevError;
+
+  float steerAmt = Kp * error + Kd * rateError;
+  
+  steer(baseSpeed, steerAmt);
+  
+  prevError = error;
 
   delay(50);
 }
